@@ -3,9 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="description" content="Import a photo or clip and frame it against classic camera composition guides while you sketch notes on top.">
+<meta name="description" content="Import a photo, clip or YouTube link and frame it against classic camera composition guides while you sketch notes on top.">
 <meta name="theme-color" content="#0e1013">
 <title>Framewright</title>
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap">
 <style>
 html,body{height:100%;margin:0;padding:0;}
@@ -44,6 +45,15 @@ body{background:var(--bg);color:var(--text);}
 .placeholder-label{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:5px;background:rgba(8,9,11,.58);color:#fff;font-family:var(--mono);font-size:13px;letter-spacing:.1em;text-align:center;text-transform:uppercase;padding:16px;}
 .placeholder-label span{font-size:11px;color:rgba(255,255,255,.68);text-transform:none;letter-spacing:normal;font-family:var(--sans);}
 #mediaImg,#mediaVideo{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000;}
+#ytFrame{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;}
+.yt-row{display:flex;gap:8px;margin-top:10px;}
+.yt-input{flex:1;min-width:0;font-family:var(--sans);font-size:12.5px;padding:9px 10px;border-radius:8px;border:1px solid var(--border);background:var(--panel-2);color:var(--text);}
+.yt-input::placeholder{color:var(--text-faint);}
+.yt-draw-toggle{position:absolute;top:10px;right:10px;z-index:5;font-family:var(--sans);font-size:12px;font-weight:600;padding:7px 11px;border-radius:8px;border:1px solid var(--border);background:rgba(21,24,29,.85);color:var(--text);cursor:pointer;display:inline-flex;align-items:center;gap:6px;backdrop-filter:blur(2px);}
+.yt-draw-toggle:hover{border-color:var(--accent);}
+.yt-draw-toggle.active{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);}
+.btn:disabled{opacity:.5;cursor:not-allowed;}
+.btn:disabled:hover{border-color:var(--border);color:var(--text);}
 #guideLayer{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;}
 #maskLayer{position:absolute;inset:0;pointer-events:none;}
 .mask-bar{position:absolute;background:rgba(6,7,9,.82);}
@@ -125,6 +135,8 @@ body{background:var(--bg);color:var(--text);}
         </div>
         <img id="mediaImg" hidden alt="Imported frame">
         <video id="mediaVideo" hidden playsinline muted loop></video>
+        <iframe id="ytFrame" hidden title="YouTube video player" allow="autoplay; encrypted-media" allowfullscreen></iframe>
+        <button class="yt-draw-toggle" id="ytDrawToggle" hidden title="Toggle drawing on top of the YouTube player"><span aria-hidden="true">✎</span><span>Draw over video</span></button>
         <svg id="guideLayer" viewBox="0 0 1000 562.5" preserveAspectRatio="none"></svg>
         <div id="maskLayer"></div>
         <canvas id="drawLayer"></canvas>
@@ -165,6 +177,11 @@ body{background:var(--bg);color:var(--text);}
           <button class="btn btn-primary" id="importBtn">Import media</button>
         </div>
         <p class="hint">MP4, MOV, WebM or any still image. Files stay on this device — nothing is uploaded.</p>
+        <div class="yt-row">
+          <input type="text" class="yt-input" id="ytInput" placeholder="Paste a YouTube link">
+          <button class="btn" id="ytLoadBtn" style="flex:0 0 auto;">Load</button>
+        </div>
+        <p class="hint" id="ytHint">Overlays guides live on top of the embedded player. The quick Export screenshot button can't read an embedded video's pixels — use Capture via screen share below instead to export it.</p>
       </div>
 
       <div class="panel-section">
@@ -248,6 +265,18 @@ body{background:var(--bg);color:var(--text);}
           <button class="iconbtn" id="clearBtn" title="Clear drawing">✕</button>
         </div>
       </div>
+
+      <div class="panel-section">
+        <h3>Export</h3>
+        <div class="import-row">
+          <button class="btn btn-primary" id="exportBtn">Export screenshot</button>
+        </div>
+        <p class="hint" id="exportHint">Flattens the media, guides, mask and your drawing into one PNG at the media's full resolution and downloads it.</p>
+        <div class="import-row" style="margin-top:10px;">
+          <button class="btn" id="captureBtn">Capture via screen share</button>
+        </div>
+        <p class="hint">Works on anything on screen, including an embedded YouTube video. Your browser will ask you to pick something to share — choose <strong>This Tab</strong> — then it grabs exactly what's rendered (video, guides and drawing together) and downloads it.</p>
+      </div>
     </aside>
   </main>
 </div>
@@ -279,12 +308,19 @@ body{background:var(--bg);color:var(--text);}
   const frameModeBtn=document.getElementById('frameModeBtn');
   const frameResetBtn=document.getElementById('frameResetBtn');
   const frameHint=document.getElementById('frameHint');
+  const ytFrame=document.getElementById('ytFrame');
+  const ytInput=document.getElementById('ytInput');
+  const ytLoadBtn=document.getElementById('ytLoadBtn');
+  const ytHint=document.getElementById('ytHint');
+  const ytDrawToggle=document.getElementById('ytDrawToggle');
+  const exportHint=document.getElementById('exportHint');
 
   const state={
     aspect:1280/720,
     hasMedia:false,
     objectUrl:null,
     isVideo:false,
+    isYoutube:false,
     guides:{thirds:true,phi:false,spiral:false,cross:false,diag:false,grid4:false,safe:false},
     guideColor:'#f0a83c',
     guideOpacity:0.9,
@@ -615,7 +651,69 @@ body{background:var(--bg);color:var(--text);}
   function updateMeta(name,w,h,extra){
     mediaMeta.textContent=name.toUpperCase()+' · '+w+'×'+h+(extra?(' · '+extra):'');
   }
+  function exitYoutubeMode(){
+    state.isYoutube=false;
+    ytFrame.hidden=true;
+    ytFrame.src='';
+    ytDrawToggle.hidden=true;
+    ytDrawToggle.classList.remove('active');
+    drawCanvas.style.pointerEvents=state.frameMode?'none':'auto';
+    exportBtn.disabled=false;
+    exportHint.textContent="Flattens the media, guides, mask and your drawing into one PNG at the media's full resolution and downloads it.";
+  }
+  function setYtDrawMode(on){
+    ytDrawToggle.classList.toggle('active',on);
+    ytDrawToggle.querySelector('span:last-child').textContent=on?'Drawing on':'Draw over video';
+    if(state.isYoutube) drawCanvas.style.pointerEvents=on?'auto':'none';
+  }
+  function parseYouTubeId(raw){
+    const val=(raw||'').trim();
+    if(/^[A-Za-z0-9_-]{10,12}$/.test(val)) return val;
+    try{
+      const u=new URL(val);
+      const host=u.hostname.replace(/^www\./,'').replace(/^m\./,'');
+      if(host==='youtu.be') return u.pathname.split('/').filter(Boolean)[0]||null;
+      if(host==='youtube.com'||host==='youtube-nocookie.com'||host==='music.youtube.com'){
+        if(u.pathname==='/watch') return u.searchParams.get('v');
+        const m=u.pathname.match(/\/(embed|shorts|live)\/([A-Za-z0-9_-]{6,})/);
+        if(m) return m[2];
+      }
+    }catch(e){ /* not a URL */ }
+    return null;
+  }
+  function loadYouTube(raw){
+    const id=parseYouTubeId(raw);
+    if(!id){
+      ytHint.textContent="Couldn't read a video ID from that — paste a full YouTube link (e.g. youtube.com/watch?v=… or youtu.be/…).";
+      return;
+    }
+    ytHint.textContent="Overlays guides live on top of the embedded player. The quick Export screenshot button can't read an embedded video's pixels — use Capture via screen share below instead to export it.";
+    if(state.objectUrl){ URL.revokeObjectURL(state.objectUrl); state.objectUrl=null; }
+    strokes.length=0;
+    placeholderBars.style.display='none';
+    mediaImg.hidden=true; mediaImg.src='';
+    mediaVideo.hidden=true; mediaVideo.pause(); mediaVideo.removeAttribute('src'); mediaVideo.load();
+    videoControls.hidden=true;
+    state.isVideo=false;
+    state.isYoutube=true;
+    ytFrame.src='https://www.youtube-nocookie.com/embed/'+encodeURIComponent(id)+'?rel=0&modestbranding=1&playsinline=1';
+    ytFrame.hidden=false;
+    ytDrawToggle.hidden=false;
+    setYtDrawMode(false);
+    exportBtn.disabled=true;
+    exportHint.textContent="Can't read an embedded video's pixels directly — use Capture via screen share below instead.";
+    setStageAspect(16/9);
+    state.hasMedia=true;
+    mediaMeta.textContent='YOUTUBE · '+id+' · LIVE OVERLAY (NOT EXPORTABLE)';
+    renderFrame();
+    resizeCanvas();
+  }
+  ytLoadBtn.addEventListener('click',()=>loadYouTube(ytInput.value));
+  ytInput.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); loadYouTube(ytInput.value); } });
+  ytDrawToggle.addEventListener('click',()=>setYtDrawMode(!ytDrawToggle.classList.contains('active')));
+
   function loadMedia(file){
+    exitYoutubeMode();
     if(state.objectUrl) URL.revokeObjectURL(state.objectUrl);
     const url=URL.createObjectURL(file);
     state.objectUrl=url;
@@ -690,6 +788,141 @@ body{background:var(--bg);color:var(--text);}
   stepBackBtn.addEventListener('click',()=>stepFrame(-1));
   stepFwdBtn.addEventListener('click',()=>stepFrame(1));
   fpsSelect.addEventListener('change',updateTimeDisplay);
+
+  // ---------- Export ----------
+  const exportBtn=document.getElementById('exportBtn');
+  async function saveFile(filename,blob){
+    if(window.claude && typeof window.claude.use==='function'){
+      try{
+        const downloads=await window.claude.use('downloads');
+        if(downloads){
+          try{
+            await downloads.save({filename,data:blob});
+          }catch(err){
+            console.warn('Export declined or failed:',err && err.code);
+          }
+          return;
+        }
+      }catch(e){ /* capability unavailable here; fall through to direct download */ }
+    }
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download=filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),2000);
+  }
+  function exportScreenshot(){
+    if(state.isYoutube) return;
+    const nw=state.hasMedia ? (state.isVideo?mediaVideo.videoWidth:mediaImg.naturalWidth) : 1920;
+    const nh=state.hasMedia ? (state.isVideo?mediaVideo.videoHeight:mediaImg.naturalHeight) : Math.round(1920/state.aspect);
+    const out=document.createElement('canvas');
+    out.width=nw; out.height=nh;
+    const octx=out.getContext('2d');
+
+    if(state.hasMedia){
+      octx.drawImage(state.isVideo?mediaVideo:mediaImg,0,0,nw,nh);
+    } else {
+      const barColors=['#d9d9d9','#d9d900','#00d9d9','#00d900','#d900d9','#d90000','#0000d9'];
+      const bw=nw/barColors.length;
+      barColors.forEach((c,i)=>{ octx.fillStyle=c; octx.fillRect(Math.round(i*bw),0,Math.ceil(bw),nh); });
+    }
+
+    const f=state.frame;
+    octx.fillStyle='rgba(6,7,9,0.82)';
+    if(f.y>0) octx.fillRect(0,0,nw,f.y*nh);
+    if(f.y+f.h<1) octx.fillRect(0,(f.y+f.h)*nh,nw,(1-f.y-f.h)*nh);
+    if(f.x>0) octx.fillRect(0,f.y*nh,f.x*nw,f.h*nh);
+    if(f.x+f.w<1) octx.fillRect((f.x+f.w)*nw,f.y*nh,(1-f.x-f.w)*nw,f.h*nh);
+
+    function finish(){
+      octx.drawImage(drawCanvas,0,0,nw,nh);
+      out.toBlob(blob=>{
+        if(!blob) return;
+        const stamp=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+        saveFile('framewright-'+stamp+'.png',blob);
+      },'image/png');
+    }
+
+    const clone=guideLayer.cloneNode(true);
+    clone.setAttribute('width',nw);
+    clone.setAttribute('height',nh);
+    clone.style.opacity='';
+    clone.querySelectorAll('[vector-effect]').forEach(el=>el.removeAttribute('vector-effect'));
+    const styleEl=document.createElementNS(svgNS,'style');
+    styleEl.textContent='.guide-line{stroke:var(--guide-color);stroke-width:1.4;}'+
+      '.guide-alt{stroke:var(--guide-color);stroke-width:1.2;stroke-dasharray:6 5;opacity:.85;}'+
+      '.guide-faint{stroke:var(--guide-color);stroke-width:1;opacity:.5;}'+
+      '.guide-dot{fill:var(--guide-color);stroke:rgba(0,0,0,.55);stroke-width:1;}'+
+      '.guide-dot-accent{fill:var(--guide-color);stroke:#fff;stroke-width:1.5;}'+
+      '.guide-spiral{stroke:var(--guide-color);stroke-width:2;fill:none;}'+
+      '.guide-rect{fill:none;stroke:var(--guide-color);}'+
+      '.guide-safe-title{stroke-width:1;stroke-dasharray:3 4;opacity:.8;}'+
+      '.guide-safe-action{stroke-width:1.4;stroke-dasharray:8 4;opacity:.9;}';
+    clone.insertBefore(styleEl,clone.firstChild);
+    const svgData=new XMLSerializer().serializeToString(clone);
+    const svgUrl='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svgData);
+    const img=new Image();
+    img.onload=()=>{
+      octx.globalAlpha=state.guideOpacity;
+      octx.drawImage(img,0,0,nw,nh);
+      octx.globalAlpha=1;
+      finish();
+    };
+    img.onerror=finish;
+    img.src=svgUrl;
+  }
+  exportBtn.addEventListener('click',exportScreenshot);
+
+  const captureBtn=document.getElementById('captureBtn');
+  async function captureViaScreenShare(){
+    if(!(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)){
+      captureBtn.textContent='Not supported in this browser';
+      setTimeout(()=>{ captureBtn.textContent='Capture via screen share'; },2500);
+      return;
+    }
+    let stream;
+    try{
+      stream=await navigator.mediaDevices.getDisplayMedia({video:true,audio:false,preferCurrentTab:true});
+    }catch(err){
+      captureBtn.textContent='Cancelled — try again';
+      setTimeout(()=>{ captureBtn.textContent='Capture via screen share'; },2500);
+      return;
+    }
+    try{
+      const v=document.createElement('video');
+      v.muted=true;
+      v.srcObject=stream;
+      await v.play().catch(()=>{});
+      await new Promise(res=>{
+        if(v.readyState>=2) return res();
+        v.onloadeddata=()=>res();
+      });
+      await new Promise(res=>requestAnimationFrame(()=>requestAnimationFrame(res)));
+
+      const rect=stage.getBoundingClientRect();
+      const scaleX=v.videoWidth/window.innerWidth;
+      const scaleY=v.videoHeight/window.innerHeight;
+      const sx=Math.max(0,rect.left*scaleX), sy=Math.max(0,rect.top*scaleY);
+      const sw=Math.max(1,rect.width*scaleX), sh=Math.max(1,rect.height*scaleY);
+
+      const out=document.createElement('canvas');
+      out.width=Math.round(sw); out.height=Math.round(sh);
+      const octx=out.getContext('2d');
+      octx.drawImage(v,sx,sy,sw,sh,0,0,out.width,out.height);
+
+      out.toBlob(blob=>{
+        if(!blob) return;
+        const stamp=new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+        saveFile('framewright-capture-'+stamp+'.png',blob);
+      },'image/png');
+    } finally {
+      stream.getTracks().forEach(t=>t.stop());
+    }
+  }
+  captureBtn.addEventListener('click',captureViaScreenShare);
 
   window.addEventListener('keydown',e=>{
     const tag=(document.activeElement&&document.activeElement.tagName)||'';
